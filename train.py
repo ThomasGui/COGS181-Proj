@@ -8,12 +8,12 @@ from six.moves import cPickle
 
 from utils import TextLoader
 from model import Model
-
+input
 
 def main():
     parser = argparse.ArgumentParser(
                         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--data_dir', type=str, default='data/tinyshakespeare',
+    parser.add_argument('--data_dir', type=str, default='data/fakenews',
                         help='data directory containing input.txt')
     parser.add_argument('--save_dir', type=str, default='save',
                         help='directory to store checkpointed models')
@@ -25,11 +25,11 @@ def main():
                         help='number of layers in the RNN')
     parser.add_argument('--model', type=str, default='lstm',
                         help='rnn, gru, lstm, or nas')
-    parser.add_argument('--batch_size', type=int, default=50,
+    parser.add_argument('--batch_size', type=int, default=100,
                         help='minibatch size')
     parser.add_argument('--seq_length', type=int, default=50,
                         help='RNN sequence length')
-    parser.add_argument('--num_epochs', type=int, default=50,
+    parser.add_argument('--num_epochs', type=int, default=15,
                         help='number of epochs')
     parser.add_argument('--save_every', type=int, default=1000,
                         help='save frequency')
@@ -90,49 +90,49 @@ def train(args):
         cPickle.dump((data_loader.chars, data_loader.vocab), f)
 
     model = Model(args)
+    with tf.device('/device:GPU:1'):
+        with tf.Session(config=tf.ConfigProto(log_device_placement=True, allow_soft_placement=True)) as sess:
+            # instrument for tensorboard
+            summaries = tf.summary.merge_all()
+            writer = tf.summary.FileWriter(
+                    os.path.join(args.log_dir, time.strftime("%Y-%m-%d-%H-%M-%S")))
+            writer.add_graph(sess.graph)
 
-    with tf.Session() as sess:
-        # instrument for tensorboard
-        summaries = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(
-                os.path.join(args.log_dir, time.strftime("%Y-%m-%d-%H-%M-%S")))
-        writer.add_graph(sess.graph)
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver(tf.global_variables())
+            # restore model
+            if args.init_from is not None:
+                saver.restore(sess, ckpt.model_checkpoint_path)
+            for e in range(args.num_epochs):
+                sess.run(tf.assign(model.lr,
+                                   args.learning_rate * (args.decay_rate ** e)))
+                data_loader.reset_batch_pointer()
+                state = sess.run(model.initial_state)
+                for b in range(data_loader.num_batches):
+                    start = time.time()
+                    x, y = data_loader.next_batch()
+                    feed = {model.input_data: x, model.targets: y}
+                    for i, (c, h) in enumerate(model.initial_state):
+                        feed[c] = state[i].c
+                        feed[h] = state[i].h
 
-        sess.run(tf.global_variables_initializer())
-        saver = tf.train.Saver(tf.global_variables())
-        # restore model
-        if args.init_from is not None:
-            saver.restore(sess, ckpt.model_checkpoint_path)
-        for e in range(args.num_epochs):
-            sess.run(tf.assign(model.lr,
-                               args.learning_rate * (args.decay_rate ** e)))
-            data_loader.reset_batch_pointer()
-            state = sess.run(model.initial_state)
-            for b in range(data_loader.num_batches):
-                start = time.time()
-                x, y = data_loader.next_batch()
-                feed = {model.input_data: x, model.targets: y}
-                for i, (c, h) in enumerate(model.initial_state):
-                    feed[c] = state[i].c
-                    feed[h] = state[i].h
+                    # instrument for tensorboard
+                    summ, train_loss, state, _ = sess.run([summaries, model.cost, model.final_state, model.train_op], feed)
+                    writer.add_summary(summ, e * data_loader.num_batches + b)
 
-                # instrument for tensorboard
-                summ, train_loss, state, _ = sess.run([summaries, model.cost, model.final_state, model.train_op], feed)
-                writer.add_summary(summ, e * data_loader.num_batches + b)
-
-                end = time.time()
-                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}"
-                      .format(e * data_loader.num_batches + b,
-                              args.num_epochs * data_loader.num_batches,
-                              e, train_loss, end - start))
-                if (e * data_loader.num_batches + b) % args.save_every == 0\
-                        or (e == args.num_epochs-1 and
-                            b == data_loader.num_batches-1):
-                    # save for the last result
-                    checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
-                    saver.save(sess, checkpoint_path,
-                               global_step=e * data_loader.num_batches + b)
-                    print("model saved to {}".format(checkpoint_path))
+                    end = time.time()
+                    print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}"
+                          .format(e * data_loader.num_batches + b,
+                                  args.num_epochs * data_loader.num_batches,
+                                  e, train_loss, end - start))
+                    if (e * data_loader.num_batches + b) % args.save_every == 0\
+                            or (e == args.num_epochs-1 and
+                                b == data_loader.num_batches-1):
+                        # save for the last result
+                        checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
+                        saver.save(sess, checkpoint_path,
+                                   global_step=e * data_loader.num_batches + b)
+                        print("model saved to {}".format(checkpoint_path))
 
 
 if __name__ == '__main__':

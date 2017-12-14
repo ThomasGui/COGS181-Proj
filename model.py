@@ -1,9 +1,10 @@
 import tensorflow as tf
 from tensorflow.contrib import rnn
 from tensorflow.contrib import legacy_seq2seq
-
+import os
 import numpy as np
 
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 
 class Model():
     def __init__(self, args, training=True):
